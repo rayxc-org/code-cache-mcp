@@ -255,27 +255,25 @@ server.registerTool(
       task: z
         .string()
         .describe("Task description that this code accomplishes"),
-      files: z
-        .array(
-          z.object({
-            path: z.string().describe("File path (e.g. 'src/utils.ts')"),
-            content: z.string().describe("Full file content"),
-          })
-        )
-        .describe("Files to upload to the cache"),
+      file: z
+        .object({
+          path: z.string().describe("File path (e.g. 'src/utils.ts')"),
+          content: z.string().describe("Full file content"),
+        })
+        .describe("File to upload to the cache"),
       succeeded: z
         .boolean()
         .default(true)
         .describe("Whether the execution succeeded (default true)"),
     },
   },
-  async ({ task, files, succeeded }) => {
+  async ({ task, file, succeeded }) => {
     try {
       const data = await apiRequest<UploadApiResponse>(
         "/api/store/execution-result",
         {
           task,
-          files_written: files,
+          file_written: file,
           succeeded: succeeded ?? true,
           auto_vote: true,
         }
@@ -442,7 +440,7 @@ server.registerResource(
           "",
           "2. raysurfer_upload - Upload code after a successful execution",
           "   Use AFTER completing a task to share your solution.",
-          "   Example: { task: 'Parse CSV', files: [{ path: 'parser.py', content: '...' }] }",
+          "   Example: { task: 'Parse CSV', file: { path: 'parser.py', content: '...' } }",
           "",
           "3. raysurfer_vote - Vote on cached code quality",
           "   Use to upvote code that worked or downvote code that did not.",
