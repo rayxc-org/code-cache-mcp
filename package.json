@@ -1,19 +1,18 @@
 {
   "name": "raysurfer-code-caching-mcp",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "MCP server that exposes Raysurfer code caching as native Claude Code tools",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "bin": {
-    "raysurfer-code-caching-mcp": "./dist/index.js"
+    "raysurfer-code-caching-mcp": "dist/index.js"
   },
   "files": [
-    "dist",
-    "README.md"
+    "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').chmodSync('dist/index.js', '755')\"",
+    "prepare": "bun run build",
+    "watch": "tsc --watch",
     "start": "node dist/index.js",
     "dev": "bun run src/index.ts"
   },
@@ -29,11 +28,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rayxc-org/raysurfer"
+    "url": "git+https://github.com/rayxc-org/raysurfer.git"
   },
   "homepage": "https://raysurfer.com",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {

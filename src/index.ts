@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-const VERSION = "1.0.0";
+const VERSION = "1.0.2";
 const BASE_URL = "https://api.raysurfer.com";
 
 // ---------------------------------------------------------------------------
@@ -18,7 +18,8 @@ function getApiKey(): string | undefined {
 
 async function apiRequest<T>(
   path: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  extraHeaders?: Record<string, string>
 ): Promise<T> {
   /** Make an authenticated POST request to the Raysurfer API. */
   const apiKey = getApiKey();
@@ -29,13 +30,16 @@ async function apiRequest<T>(
     );
   }
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    "X-Raysurfer-SDK-Version": `mcp/${VERSION}`,
+    ...extraHeaders,
+  };
+
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "X-Raysurfer-SDK-Version": `mcp/${VERSION}`,
-    },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -59,11 +63,12 @@ interface SearchMatch {
     source: string;
     entrypoint: string;
     language: string;
-    dependencies: string[];
+    dependencies: Record<string, string>;
   };
   combined_score: number;
   vector_score: number;
   verdict_score: number;
+  error_resilience: number;
   thumbs_up: number;
   thumbs_down: number;
   filename: string;
@@ -78,9 +83,9 @@ interface SearchApiResponse {
 
 interface UploadApiResponse {
   success: boolean;
-  code_block_ids?: string[];
-  code_blocks_stored?: number;
+  code_blocks_stored: number;
   message: string;
+  status_url: string | null;
 }
 
 interface VoteApiResponse {
@@ -126,8 +131,9 @@ function formatSearchResults(data: SearchApiResponse): string {
       `Score: ${m.combined_score.toFixed(3)} (vector=${m.vector_score.toFixed(3)}, verdict=${m.verdict_score.toFixed(3)})`
     );
     lines.push(`Votes: +${m.thumbs_up} / -${m.thumbs_down}`);
-    if (cb.dependencies && cb.dependencies.length > 0) {
-      lines.push(`Dependencies: ${cb.dependencies.join(", ")}`);
+    if (cb.dependencies && Object.keys(cb.dependencies).length > 0) {
+      const deps = Object.entries(cb.dependencies).map(([k, v]) => `${k}@${v}`);
+      lines.push(`Dependencies: ${deps.join(", ")}`);
     }
     lines.push(`Entrypoint: ${cb.entrypoint}`);
     lines.push("");
@@ -196,6 +202,7 @@ server.registerTool(
       "Search for cached code snippets matching a task description. " +
       "Returns ranked matches with source code, scores, and metadata. " +
       "Use this before writing new code to check if a solution already exists.",
+    annotations: { readOnlyHint: true, destructiveHint: false },
     inputSchema: {
       task: z.string().describe("Task description to search for"),
       top_k: z
@@ -211,10 +218,17 @@ server.registerTool(
         .max(1)
         .default(0.3)
         .describe("Minimum verdict score threshold (0-1, default 0.3)"),
+      public_snips: z
+        .boolean()
+        .default(false)
+        .describe("Include community public snippets in results (default false)"),
     },
   },
-  async ({ task, top_k, min_score }) => {
+  async ({ task, top_k, min_score, public_snips }) => {
     try {
+      const extraHeaders = public_snips
+        ? { "X-Raysurfer-Public-Snips": "true" }
+        : undefined;
       const data = await apiRequest<SearchApiResponse>(
         "/api/retrieve/search",
         {
@@ -222,7 +236,8 @@ server.registerTool(
           top_k: top_k ?? 5,
           min_verdict_score: min_score ?? 0.3,
           prefer_complete: true,
-        }
+        },
+        extraHeaders
       );
 
       return {
@@ -251,6 +266,7 @@ server.registerTool(
       "Upload code files from a successful execution to the Raysurfer cache. " +
       "This stores the code so it can be reused by others for similar tasks. " +
       "Call this after completing a coding task successfully.",
+    annotations: { readOnlyHint: false, destructiveHint: false },
     inputSchema: {
       task: z
         .string()
@@ -275,19 +291,16 @@ server.registerTool(
           task,
           file_written: file,
           succeeded: succeeded ?? true,
-          auto_vote: true,
+          use_raysurfer_ai_voting: true,
         }
       );
 
-      const stored = data.code_blocks_stored ?? data.code_block_ids?.length ?? 0;
-      const ids = data.code_block_ids
-        ? ` (IDs: ${data.code_block_ids.join(", ")})`
-        : "";
+      const stored = data.code_blocks_stored ?? 0;
       return {
         content: [
           {
             type: "text",
-            text: `Upload ${data.success ? "successful" : "failed"}: ${stored} code block${stored !== 1 ? "s" : ""} stored${ids}. ${data.message}`,
+            text: `Upload ${data.success ? "successful" : "failed"}: ${stored} code block${stored !== 1 ? "s" : ""} stored. ${data.message}`,
           },
         ],
       };
@@ -314,28 +327,36 @@ server.registerTool(
       "Vote on whether a cached code snippet was useful. " +
       "Upvote code that worked well, downvote code that did not help. " +
       "This improves ranking for future searches.",
+    annotations: { readOnlyHint: false, destructiveHint: false },
     inputSchema: {
       code_block_id: z
         .string()
         .describe("ID of the code block to vote on"),
+      code_block_name: z
+        .string()
+        .describe("Name of the code block being voted on"),
+      code_block_description: z
+        .string()
+        .describe("Description of the code block being voted on"),
       up: z
         .boolean()
         .default(true)
         .describe("True for upvote (worked), false for downvote (default true)"),
       task: z
         .string()
-        .optional()
         .describe("Task description for vote context"),
     },
   },
-  async ({ code_block_id, up, task }) => {
+  async ({ code_block_id, code_block_name, code_block_description, up, task }) => {
     try {
       const data = await apiRequest<VoteApiResponse>(
         "/api/store/cache-usage",
         {
           code_block_id,
+          code_block_name,
+          code_block_description,
           succeeded: up ?? true,
-          task: task ?? "",
+          task,
         }
       );
 
@@ -371,6 +392,7 @@ server.registerTool(
       "Get proven task-to-code patterns from the community cache. " +
       "These are code snippets that have been repeatedly validated by users. " +
       "Optionally filter by task description.",
+    annotations: { readOnlyHint: true, destructiveHint: false },
     inputSchema: {
       task: z
         .string()
@@ -527,9 +549,10 @@ async function main(): Promise<void> {
   /** Start the MCP server using STDIO transport. */
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  console.error("Raysurfer MCP Server running on stdio");
 }
 
 main().catch((error) => {
-  process.stderr.write(`Fatal error: ${error}\n`);
+  console.error("Fatal error running server:", error);
   process.exit(1);
 });

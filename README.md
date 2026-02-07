@@ -1,37 +1,61 @@
 # Raysurfer Code Caching MCP Server
 
-MCP (Model Context Protocol) server that provides Raysurfer code caching tools for AI assistants.
+MCP server that caches and reuses code from prior AI agent executions. Search before coding, upload after success.
 
-## Installation
-
-```bash
-npm install raysurfer-code-caching-mcp
-```
-
-Or with bun:
-
-```bash
-bun add raysurfer-code-caching-mcp
-```
+No install required — runs via `npx`.
 
 ## Setup
 
-```bash
-export RAYSURFER_API_KEY=your_api_key_here
-```
+Get your API key from the [dashboard](https://raysurfer.com/dashboard/api-keys).
 
-Get your key from the [dashboard](https://raysurfer.com/dashboard/api-keys).
+### Claude Desktop
 
-## Configuration
+Add to your `claude_desktop_config.json`:
 
-Add to your MCP client configuration:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "raysurfer": {
       "command": "npx",
-      "args": ["raysurfer-code-caching-mcp"]
+      "args": ["-y", "raysurfer-code-caching-mcp"],
+      "env": {
+        "RAYSURFER_API_KEY": "YOUR_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
+
+### Claude Code
+
+```bash
+claude mcp add raysurfer -e RAYSURFER_API_KEY=YOUR_API_KEY_HERE -- npx -y raysurfer-code-caching-mcp
+```
+
+### VS Code
+
+Add to your `.vscode/mcp.json`:
+
+```json
+{
+  "inputs": [
+    {
+      "password": true,
+      "id": "raysurfer-api-key",
+      "type": "promptString",
+      "description": "Raysurfer API Key"
+    }
+  ],
+  "servers": {
+    "raysurfer": {
+      "command": "npx",
+      "args": ["-y", "raysurfer-code-caching-mcp"],
+      "env": {
+        "RAYSURFER_API_KEY": "${input:raysurfer-api-key}"
+      }
     }
   }
 }
@@ -41,7 +65,7 @@ Add to your MCP client configuration:
 
 | Tool | Description |
 |------|-------------|
-| `raysurfer_search` | Search for cached code matching a task |
+| `raysurfer_search` | Search for cached code matching a task (set `public_snips: true` to include community snippets) |
 | `raysurfer_upload` | Upload code after successful execution |
 | `raysurfer_vote` | Vote on cached code quality |
 | `raysurfer_patterns` | Get proven task-to-code patterns |
@@ -54,13 +78,8 @@ Add to your MCP client configuration:
 ## Development
 
 ```bash
-# Install dependencies
 bun install
-
-# Build
 bun run build
-
-# Run server
 bun run dist/index.js
 ```
 
